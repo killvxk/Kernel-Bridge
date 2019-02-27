@@ -1,5 +1,7 @@
 #include <fltKernel.h>
 
+#include "PTE.h"
+#include "PteUtils.h"
 #include "MemoryUtils.h"
 
 namespace VirtualMemory {
@@ -70,6 +72,50 @@ namespace VirtualMemory {
         MmFreeNonCachedMemory(Address, Bytes);
     }
 
+    BOOLEAN CopyMemory(PVOID Dest, PVOID Src, SIZE_T Size, BOOLEAN Intersects, OPTIONAL BOOLEAN CheckBuffersPresence) {
+        if (CheckBuffersPresence) {
+            if (AddressRange::IsKernelAddress(Src) && !IsMemoryRangePresent(Src, Size)) return FALSE;
+            if (AddressRange::IsKernelAddress(Dest) && !IsMemoryRangePresent(Dest, Size)) return FALSE;
+        }
+
+        switch (Size) {
+        case sizeof(UCHAR): {
+            *reinterpret_cast<PUCHAR>(Dest) = *reinterpret_cast<PUCHAR>(Src);
+            break;
+        }
+        case sizeof(USHORT): {
+            *reinterpret_cast<PUSHORT>(Dest) = *reinterpret_cast<PUSHORT>(Src);
+            break;              
+        }
+        case sizeof(ULONG): {
+            *reinterpret_cast<PULONG>(Dest) = *reinterpret_cast<PULONG>(Src);
+            break;
+        }
+#ifdef _AMD64_
+        case sizeof(ULONGLONG): {
+            *reinterpret_cast<PULONGLONG>(Dest) = *reinterpret_cast<PULONGLONG>(Src);
+            break;
+        }
+#endif
+        default: {
+            if (Intersects) {
+                RtlMoveMemory(
+                    reinterpret_cast<PVOID>(Dest),
+                    reinterpret_cast<PVOID>(Src),
+                    Size
+                );
+            } else {
+                RtlCopyMemory(
+                    reinterpret_cast<PVOID>(Dest),
+                    reinterpret_cast<PVOID>(Src),
+                    Size
+                );
+            }
+        }
+        }
+        return TRUE;
+    }
+
     _IRQL_requires_max_(APC_LEVEL)
     BOOLEAN SecureMemory(
         __in_data_source(USER_MODE) PVOID UserAddress, 
@@ -127,6 +173,21 @@ namespace VirtualMemory {
     _IRQL_requires_max_(DISPATCH_LEVEL)
     BOOLEAN IsAddressValid(PVOID Address) {
         return MmIsAddressValid(Address);
+    }
+
+    _IRQL_requires_max_(DISPATCH_LEVEL)
+    BOOLEAN IsPagePresent(PVOID Address) {
+        return PhysicalMemory::GetPhysicalAddress(Address) || MmIsAddressValid(Address);
+    }
+
+    _IRQL_requires_max_(DISPATCH_LEVEL)
+    BOOLEAN IsMemoryRangePresent(PVOID Address, SIZE_T Size) {
+        PVOID PageCounter = ALIGN_DOWN_POINTER_BY(Address, PAGE_SIZE);
+        do {
+            if (!IsPagePresent(PageCounter)) return FALSE;
+            PageCounter = reinterpret_cast<PVOID>(reinterpret_cast<SIZE_T>(PageCounter) + PAGE_SIZE);
+        } while (reinterpret_cast<SIZE_T>(PageCounter) < reinterpret_cast<SIZE_T>(Address) + Size);
+        return TRUE;
     }
 
     _IRQL_requires_max_(APC_LEVEL)
@@ -267,7 +328,7 @@ namespace PhysicalMemory {
     PVOID AllocPhysicalMemory(PVOID64 HighestAcceptableAddress, SIZE_T Size) {
         return MmAllocateContiguousMemory(
             Size, 
-            *reinterpret_cast<PHYSICAL_ADDRESS*>(HighestAcceptableAddress)
+            *reinterpret_cast<PHYSICAL_ADDRESS*>(&HighestAcceptableAddress)
         );
     }
 
@@ -281,9 +342,9 @@ namespace PhysicalMemory {
     ) {
         return MmAllocateContiguousMemorySpecifyCache(
             Size, 
-            *reinterpret_cast<PHYSICAL_ADDRESS*>(LowestAcceptableAddress),
-            *reinterpret_cast<PHYSICAL_ADDRESS*>(HighestAcceptableAddress),
-            *reinterpret_cast<PHYSICAL_ADDRESS*>(BoundaryAddressMultiple),
+            *reinterpret_cast<PHYSICAL_ADDRESS*>(&LowestAcceptableAddress),
+            *reinterpret_cast<PHYSICAL_ADDRESS*>(&HighestAcceptableAddress),
+            *reinterpret_cast<PHYSICAL_ADDRESS*>(&BoundaryAddressMultiple),
             CachingType
         );
     }
@@ -324,22 +385,64 @@ namespace PhysicalMemory {
         return MmGetVirtualForPhysical(*reinterpret_cast<PPHYSICAL_ADDRESS>(&PhysicalAddress));
     }
 
-    _IRQL_requires_max_(DISPATCH_LEVEL)
+    _IRQL_requires_max_(APC_LEVEL)
     BOOLEAN ReadPhysicalMemory(IN PVOID64 PhysicalAddress, OUT PVOID Buffer, SIZE_T Length, MEMORY_CACHING_TYPE CachingType) {
-        PVOID MappedMemory = MapPhysicalMemory(PhysicalAddress, Length, CachingType);
-        if (!MappedMemory) return FALSE;
-        RtlCopyMemory(Buffer, MappedMemory, Length);
-        UnmapPhysicalMemory(MappedMemory, Length);
-        return TRUE;
+        BOOLEAN Status;
+        PVOID VirtualAddress = GetVirtualForPhysical(PhysicalAddress);
+        if (VirtualAddress) {
+            __try {
+                VirtualMemory::CopyMemory(Buffer, VirtualAddress, Length);
+                Status = TRUE;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                Status = FALSE;
+            }
+        } else {
+            Status = FALSE;
+        }
+
+        if (!Status) {
+            PVOID MappedMemory = MapPhysicalMemory(PhysicalAddress, Length, CachingType);
+            if (!MappedMemory) return FALSE;
+            __try {
+                VirtualMemory::CopyMemory(Buffer, MappedMemory, Length);
+                Status = TRUE;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                Status = FALSE;
+            }
+            UnmapPhysicalMemory(MappedMemory, Length);
+        }
+
+        return Status;
     }
 
-    _IRQL_requires_max_(DISPATCH_LEVEL)
+    _IRQL_requires_max_(APC_LEVEL)
     BOOLEAN WritePhysicalMemory(OUT PVOID64 PhysicalAddress, IN PVOID Buffer, SIZE_T Length, MEMORY_CACHING_TYPE CachingType) {
-        PVOID MappedMemory = MapPhysicalMemory(PhysicalAddress, Length, CachingType);
-        if (!MappedMemory) return FALSE;
-        RtlCopyMemory(MappedMemory, Buffer, Length);
-        UnmapPhysicalMemory(MappedMemory, Length);
-        return TRUE;
+        BOOLEAN Status;
+        PVOID VirtualAddress = GetVirtualForPhysical(PhysicalAddress);
+        if (VirtualAddress) {
+            __try {
+                VirtualMemory::CopyMemory(VirtualAddress, Buffer, Length);
+                Status = TRUE;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                Status = FALSE;
+            }
+        } else {
+            Status = FALSE;
+        }
+
+        if (!Status) {
+            PVOID MappedMemory = MapPhysicalMemory(PhysicalAddress, Length, CachingType);
+            if (!MappedMemory) return FALSE;
+            __try {
+                VirtualMemory::CopyMemory(MappedMemory, Buffer, Length);
+                Status = TRUE;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                Status = FALSE;
+            }
+            UnmapPhysicalMemory(MappedMemory, Length);
+        }
+
+        return Status;
     }
 }
 
@@ -380,8 +483,8 @@ namespace Mdl {
         OUT PVOID* MappedMemory,
         OPTIONAL PEPROCESS SrcProcess,
         OPTIONAL PEPROCESS DestProcess,
-        BOOLEAN NeedLock,
-        KPROCESSOR_MODE AccessMode, 
+        BOOLEAN NeedProbeAndLock,
+        KPROCESSOR_MODE MapToAddressSpace, 
         ULONG Protect,
         MEMORY_CACHING_TYPE CacheType,
         OPTIONAL PVOID UserRequestedAddress     
@@ -391,8 +494,8 @@ namespace Mdl {
 
         if (UserRequestedAddress) {
             if (
-                (AccessMode == KernelMode && AddressRange::IsUserAddress(UserRequestedAddress)) || 
-                (AccessMode == UserMode && AddressRange::IsKernelAddress(UserRequestedAddress))
+                (MapToAddressSpace == KernelMode && AddressRange::IsUserAddress(UserRequestedAddress)) ||
+                (MapToAddressSpace == UserMode && AddressRange::IsKernelAddress(UserRequestedAddress))
             ) return STATUS_INVALID_PARAMETER_6; // Access mode is incompatible with UserRequestAddress!
         }
 
@@ -403,7 +506,7 @@ namespace Mdl {
             PEPROCESS CurrentProcess = PsGetCurrentProcess();
 
             // Lock and prepare pages in target process:
-            if (NeedLock) {
+            if (NeedProbeAndLock) {
                 if (!SrcProcess || SrcProcess == CurrentProcess)
                     MmProbeAndLockPages(Mdl, KernelMode, IoReadAccess);
                 else
@@ -419,9 +522,9 @@ namespace Mdl {
             // Map prepared pages to current process:
             PVOID Mapping = MmMapLockedPagesSpecifyCache(
                 Mdl,
-                AccessMode,
+                MapToAddressSpace,
                 CacheType,
-                AccessMode == UserMode ? UserRequestedAddress : NULL,
+                MapToAddressSpace == UserMode ? UserRequestedAddress : NULL,
                 FALSE,
                 NormalPagePriority
             );
@@ -452,7 +555,7 @@ namespace Mdl {
         OPTIONAL PEPROCESS DestProcess,
         IN PVOID VirtualAddress,
         ULONG Size,
-        KPROCESSOR_MODE AccessMode, 
+        KPROCESSOR_MODE MapToAddressSpace,
         ULONG Protect,
         MEMORY_CACHING_TYPE CacheType,
         OPTIONAL PVOID UserRequestedAddress 
@@ -470,7 +573,7 @@ namespace Mdl {
             SrcProcess,
             DestProcess,
             TRUE,
-            AccessMode,
+            MapToAddressSpace,
             Protect,
             CacheType,
             UserRequestedAddress

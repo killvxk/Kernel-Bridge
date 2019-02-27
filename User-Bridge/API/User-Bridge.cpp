@@ -6,20 +6,45 @@
 
 #include "DriversUtils.h"
 
+namespace KbLoader {
+    static constexpr LPCWSTR KbDriverName = L"Kernel-Bridge";
+    static constexpr LPCWSTR KbDeviceName = L"\\\\.\\Kernel-Bridge";
+    static HANDLE hDriver = INVALID_HANDLE_VALUE;
+}
+
+static inline BOOL WINAPI KbSendRequest(
+    Ctls::KbCtlIndices Index, 
+    IN PVOID Input = NULL, 
+    ULONG InputSize = 0, 
+    OUT PVOID Output = NULL, 
+    ULONG OutputSize = 0
+) {
+    return SendIOCTL(KbLoader::hDriver, CTL_BASE + Index, Input, InputSize, Output, OutputSize);
+}
 
 namespace KbLoader {
-
-    constexpr LPCWSTR KbDriverName = L"Kernel-Bridge";
-    constexpr LPCWSTR KbDeviceName = L"\\\\.\\Kernel-Bridge";
-
-    static HANDLE hDriver = INVALID_HANDLE_VALUE;
-
     BOOL WINAPI KbLoadAsDriver(LPCWSTR DriverPath)
     {
         // Check whether the Kernel-Bridge is already loaded:
         if (hDriver != INVALID_HANDLE_VALUE) return TRUE;
         hDriver = OpenDevice(KbDeviceName);
-        if (hDriver != INVALID_HANDLE_VALUE) return TRUE;
+        if (hDriver != INVALID_HANDLE_VALUE) {
+            ULONG DriverApiVersion = KbGetDriverApiVersion();
+            if (KbGetUserApiVersion() == DriverApiVersion) return TRUE;
+            
+            ULONG HandlesCount = 0;
+            if (!KbGetHandlesCount(&HandlesCount) || HandlesCount > 1) {
+                CloseHandle(hDriver);
+                hDriver = INVALID_HANDLE_VALUE;
+                return FALSE;
+            }
+
+            CloseHandle(hDriver);
+            hDriver = INVALID_HANDLE_VALUE;
+        }
+
+        // Removing tails from previous installation:
+        DeleteDriver(KbDriverName);
 
         // Installing driver:
         BOOL Status = InstallDriver(DriverPath, KbDriverName);
@@ -42,7 +67,23 @@ namespace KbLoader {
         // Check whether the Kernel-Bridge is already loaded:
         if (hDriver != INVALID_HANDLE_VALUE) return TRUE;
         hDriver = OpenDevice(KbDeviceName);
-        if (hDriver != INVALID_HANDLE_VALUE) return TRUE;
+        if (hDriver != INVALID_HANDLE_VALUE) {
+            ULONG DriverApiVersion = KbGetDriverApiVersion();
+            if (KbGetUserApiVersion() == DriverApiVersion) return TRUE;
+            
+            ULONG HandlesCount = 0;
+            if (!KbGetHandlesCount(&HandlesCount) || HandlesCount > 1) {
+                CloseHandle(hDriver);
+                hDriver = INVALID_HANDLE_VALUE;
+                return FALSE;
+            }
+
+            CloseHandle(hDriver);
+            hDriver = INVALID_HANDLE_VALUE;
+        }
+
+        // Removing tails from previous installation:
+        DeleteDriver(KbDriverName);
 
         BOOL Status = InstallMinifilter(DriverPath, KbDriverName, Altitude);
         if (!Status) return FALSE;
@@ -60,19 +101,40 @@ namespace KbLoader {
     BOOL WINAPI KbUnload()
     {
         if (hDriver == INVALID_HANDLE_VALUE) return TRUE;
+        
+        ULONG HandlesCount = 0;
+        if (KbGetHandlesCount(&HandlesCount) && HandlesCount > 1) {
+            CloseHandle(hDriver);
+            hDriver = INVALID_HANDLE_VALUE;
+            return TRUE;
+        }
+
         CloseHandle(hDriver);
+        hDriver = INVALID_HANDLE_VALUE;
         return DeleteDriver(KbDriverName);
     }
-}
 
-static inline BOOL WINAPI KbSendRequest(
-    Ctls::KbCtlIndices Index, 
-    IN PVOID Input = NULL, 
-    ULONG InputSize = 0, 
-    OUT PVOID Output = NULL, 
-    ULONG OutputSize = 0
-) {
-    return SendIOCTL(KbLoader::hDriver, CTL_BASE + Index, Input, InputSize, Output, OutputSize);
+    ULONG WINAPI KbGetDriverApiVersion()
+    {
+        if (hDriver == INVALID_HANDLE_VALUE) return 0;
+        KB_GET_DRIVER_API_VERSION_OUT Output = {};
+        KbSendRequest(Ctls::KbGetDriverApiVersion, NULL, 0, &Output, sizeof(Output));
+        return Output.Version;
+    }
+
+    ULONG WINAPI KbGetUserApiVersion()
+    {
+        return KB_API_VERSION;
+    }
+
+    BOOL WINAPI KbGetHandlesCount(OUT PULONG Count)
+    {
+        if (!Count) return FALSE;
+        KB_GET_HANDLES_COUNT_OUT Output = {};
+        BOOL Status = KbSendRequest(Ctls::KbGetHandlesCount, NULL, 0, &Output, sizeof(Output));
+        *Count = Output.HandlesCount;
+        return Status;
+    }
 }
 
 namespace IO {
@@ -340,6 +402,24 @@ namespace VirtualMemory {
         return Status;
     }
 
+    BOOL WINAPI KbAllocNonCachedMemory(ULONG Size, OUT WdkTypes::PVOID* KernelAddress) {
+        if (!Size || !KernelAddress) return FALSE;
+        KB_ALLOC_NON_CACHED_MEMORY_IN Input = {};
+        KB_ALLOC_NON_CACHED_MEMORY_OUT Output = {};
+        Input.Size = Size;
+        BOOL Status = KbSendRequest(Ctls::KbAllocNonCachedMemory, &Input, sizeof(Input), &Output, sizeof(Output));
+        *KernelAddress = Output.KernelAddress;
+        return Status;
+    }
+
+    BOOL WINAPI KbFreeNonCachedMemory(WdkTypes::PVOID KernelAddress, ULONG Size) {
+        if (!KernelAddress) return FALSE;
+        KB_FREE_NON_CACHED_MEMORY_IN Input = {};
+        Input.KernelAddress = KernelAddress;
+        Input.Size = Size;
+        return KbSendRequest(Ctls::KbFreeNonCachedMemory, &Input, sizeof(Input));
+    }
+
     BOOL WINAPI KbCopyMoveMemory(OUT WdkTypes::PVOID Dest, IN WdkTypes::PVOID Src, ULONG Size, BOOLEAN Intersects) {
         if (!Dest || !Src || !Size) return FALSE;
         KB_COPY_MOVE_MEMORY_IN Input = {};
@@ -373,13 +453,43 @@ namespace VirtualMemory {
 }
 
 namespace Mdl {
+    BOOL WINAPI KbAllocateMdl(
+        WdkTypes::PVOID VirtualAddress,
+        ULONG Size,
+        OUT WdkTypes::PMDL* Mdl
+    ) {
+        if (!VirtualAddress || !Size || !Mdl) return FALSE;
+        KB_ALLOCATE_MDL_IN Input = {};
+        KB_ALLOCATE_MDL_OUT Output = {};
+        Input.VirtualAddress = VirtualAddress;
+        Input.Size = Size;
+        BOOL Status = KbSendRequest(Ctls::KbAllocateMdl, &Input, sizeof(Input), &Output, sizeof(Output));
+        *Mdl = Output.Mdl;
+        return Status;
+    }
+
+    BOOL WINAPI KbProbeAndLockPages(
+        OPTIONAL ULONG ProcessId,
+        WdkTypes::PMDL Mdl,
+        WdkTypes::KPROCESSOR_MODE ProcessorMode,
+        WdkTypes::LOCK_OPERATION LockOperation
+    ) {
+        if (!Mdl) return FALSE;
+        KB_PROBE_AND_LOCK_PAGES_IN Input = {};
+        Input.ProcessId = ProcessId;
+        Input.Mdl = Mdl;
+        Input.ProcessorMode = ProcessorMode;
+        Input.LockOperation = LockOperation;
+        return KbSendRequest(Ctls::KbProbeAndLockPages, &Input, sizeof(Input));
+    }
+
     BOOL WINAPI KbMapMdl(
         OUT WdkTypes::PVOID* MappedMemory,
         OPTIONAL UINT64 SrcProcessId,
         OPTIONAL UINT64 DestProcessId,
         WdkTypes::PMDL Mdl,
-        BOOLEAN NeedLock,
-        WdkTypes::KPROCESSOR_MODE AccessMode,
+        BOOLEAN NeedProbeAndLock,
+        WdkTypes::KPROCESSOR_MODE MapToAddressSpace,
         ULONG Protect,
         WdkTypes::MEMORY_CACHING_TYPE CacheType,
         OPTIONAL WdkTypes::PVOID UserRequestedAddress
@@ -390,41 +500,13 @@ namespace Mdl {
         Input.SrcProcessId = SrcProcessId;
         Input.DestProcessId = DestProcessId;
         Input.Mdl = Mdl;
-        Input.NeedLock = NeedLock;
-        Input.AccessMode = AccessMode;
+        Input.NeedProbeAndLock = NeedProbeAndLock;
+        Input.MapToAddressSpace = MapToAddressSpace;
         Input.Protect = Protect;
         Input.CacheType = CacheType;
         Input.UserRequestedAddress;
         BOOL Status = KbSendRequest(Ctls::KbMapMdl, &Input, sizeof(Input), &Output, sizeof(Output));
         *MappedMemory = Output.BaseAddress;
-        return Status;
-    }
-
-    BOOL WINAPI KbMapMemory(
-        OUT PMAPPING_INFO MappingInfo,
-        OPTIONAL UINT64 SrcProcessId,
-        OPTIONAL UINT64 DestProcessId,
-        WdkTypes::PVOID VirtualAddress,
-        ULONG Size,
-        WdkTypes::KPROCESSOR_MODE AccessMode,
-        ULONG Protect,
-        WdkTypes::MEMORY_CACHING_TYPE CacheType,
-        OPTIONAL WdkTypes::PVOID UserRequestedAddress
-    ) {
-        if (!MappingInfo || !Size) return FALSE;
-        KB_MAP_MEMORY_IN Input = {};
-        KB_MAP_MEMORY_OUT Output = {};
-        Input.SrcProcessId = SrcProcessId;
-        Input.DestProcessId = DestProcessId;
-        Input.VirtualAddress = VirtualAddress;
-        Input.Size = Size;
-        Input.AccessMode = AccessMode;
-        Input.Protect = Protect;
-        Input.CacheType = CacheType;
-        Input.UserRequestedAddress;
-        BOOL Status = KbSendRequest(Ctls::KbMapMemory, &Input, sizeof(Input), &Output, sizeof(Output));
-        MappingInfo->MappedAddress = Output.BaseAddress;
-        MappingInfo->Mdl = Output.Mdl;
         return Status;
     }
 
@@ -443,6 +525,48 @@ namespace Mdl {
         Input.BaseAddress = MappedMemory;
         Input.NeedUnlock = NeedUnlock;
         return KbSendRequest(Ctls::KbUnmapMdl, &Input, sizeof(Input));
+    }
+
+    BOOL WINAPI KbUnlockPages(WdkTypes::PMDL Mdl) {
+        if (!Mdl) return FALSE;
+        KB_UNLOCK_PAGES_IN Input = {};
+        Input.Mdl = Mdl;
+        return KbSendRequest(Ctls::KbUnlockPages, &Input, sizeof(Input));
+    }
+
+    BOOL WINAPI KbFreeMdl(WdkTypes::PMDL Mdl) {
+        if (!Mdl) return FALSE;
+        KB_FREE_MDL_IN Input = {};
+        Input.Mdl = Mdl;
+        return KbSendRequest(Ctls::KbFreeMdl, &Input, sizeof(Input));
+    }
+
+    BOOL WINAPI KbMapMemory(
+        OUT PMAPPING_INFO MappingInfo,
+        OPTIONAL UINT64 SrcProcessId,
+        OPTIONAL UINT64 DestProcessId,
+        WdkTypes::PVOID VirtualAddress,
+        ULONG Size,
+        WdkTypes::KPROCESSOR_MODE MapToAddressSpace,
+        ULONG Protect,
+        WdkTypes::MEMORY_CACHING_TYPE CacheType,
+        OPTIONAL WdkTypes::PVOID UserRequestedAddress
+    ) {
+        if (!MappingInfo || !Size) return FALSE;
+        KB_MAP_MEMORY_IN Input = {};
+        KB_MAP_MEMORY_OUT Output = {};
+        Input.SrcProcessId = SrcProcessId;
+        Input.DestProcessId = DestProcessId;
+        Input.VirtualAddress = VirtualAddress;
+        Input.Size = Size;
+        Input.MapToAddressSpace = MapToAddressSpace;
+        Input.Protect = Protect;
+        Input.CacheType = CacheType;
+        Input.UserRequestedAddress;
+        BOOL Status = KbSendRequest(Ctls::KbMapMemory, &Input, sizeof(Input), &Output, sizeof(Output));
+        MappingInfo->MappedAddress = Output.BaseAddress;
+        MappingInfo->Mdl = Output.Mdl;
+        return Status;
     }
 
     BOOL WINAPI KbUnmapMemory(IN PMAPPING_INFO MappingInfo) {
@@ -671,6 +795,74 @@ namespace Processes {
         }
     }
 
+    namespace Information {
+        BOOL WINAPI KbQueryInformationProcess(
+            WdkTypes::HANDLE hProcess,
+            NtTypes::PROCESSINFOCLASS ProcessInfoClass,
+            OUT PVOID Buffer,
+            ULONG Size,
+            OPTIONAL OUT PULONG ReturnLength
+        ) {
+            ULONG RetLength = 0;
+            KB_QUERY_INFORMATION_PROCESS_THREAD_IN Input = {};
+            Input.Handle = hProcess;
+            Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+            Input.ReturnLength = reinterpret_cast<WdkTypes::PVOID>(&RetLength);
+            Input.InfoClass = static_cast<ULONG>(ProcessInfoClass);
+            Input.Size = Size;
+            BOOL Status = KbSendRequest(Ctls::KbQueryInformationProcess, &Input, sizeof(Input));
+            if (ReturnLength) *ReturnLength = RetLength;
+            return Status;
+        }
+
+        BOOL WINAPI KbSetInformationProcess(
+            WdkTypes::HANDLE hProcess,
+            NtTypes::PROCESSINFOCLASS ProcessInfoClass,
+            IN PVOID Buffer,
+            ULONG Size
+        ) {
+            KB_SET_INFORMATION_PROCESS_THREAD_IN Input = {};
+            Input.Handle = hProcess;
+            Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+            Input.InfoClass = static_cast<ULONG>(ProcessInfoClass);
+            Input.Size = Size;
+            return KbSendRequest(Ctls::KbSetInformationProcess, &Input, sizeof(Input));
+        }
+
+        BOOL WINAPI KbQueryInformationThread(
+            WdkTypes::HANDLE hThread,
+            NtTypes::THREADINFOCLASS ThreadInfoClass,
+            OUT PVOID Buffer,
+            ULONG Size,
+            OPTIONAL OUT PULONG ReturnLength
+        ) {
+            ULONG RetLength = 0;
+            KB_QUERY_INFORMATION_PROCESS_THREAD_IN Input = {};
+            Input.Handle = hThread;
+            Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+            Input.ReturnLength = reinterpret_cast<WdkTypes::PVOID>(&RetLength);
+            Input.InfoClass = static_cast<ULONG>(ThreadInfoClass);
+            Input.Size = Size;
+            BOOL Status = KbSendRequest(Ctls::KbQueryInformationThread, &Input, sizeof(Input));
+            if (ReturnLength) *ReturnLength = RetLength;
+            return Status;
+        }
+
+        BOOL WINAPI KbSetInformationThread(
+            WdkTypes::HANDLE hThread,
+            NtTypes::THREADINFOCLASS ThreadInfoClass,
+            IN PVOID Buffer,
+            ULONG Size
+        ) {
+            KB_SET_INFORMATION_PROCESS_THREAD_IN Input = {};
+            Input.Handle = hThread;
+            Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+            Input.InfoClass = static_cast<ULONG>(ThreadInfoClass);
+            Input.Size = Size;
+            return KbSendRequest(Ctls::KbSetInformationProcess, &Input, sizeof(Input));
+        }
+    }
+
     namespace Threads {
         BOOL WINAPI KbCreateUserThread(
             ULONG ProcessId, 
@@ -800,9 +992,14 @@ namespace Processes {
             return KbSendRequest(Ctls::KbUnsecureVirtualMemory, &Input, sizeof(Input));
         }
 
-        BOOL WINAPI KbReadProcessMemory(ULONG ProcessId, IN WdkTypes::PVOID BaseAddress, OUT PVOID Buffer, ULONG Size) {
+        BOOL WINAPI KbReadProcessMemory(
+            ULONG ProcessId,
+            IN WdkTypes::PVOID BaseAddress,
+            OUT PVOID Buffer,
+            ULONG Size
+        ) {
             if (!ProcessId || !BaseAddress || !Buffer || !Size) return FALSE;
-            KB_READ_WRITE_PROCESS_MEMORY_IN Input = {};
+            KB_READ_PROCESS_MEMORY_IN Input = {};
             Input.ProcessId = ProcessId;
             Input.BaseAddress = BaseAddress;
             Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
@@ -810,23 +1007,41 @@ namespace Processes {
             return KbSendRequest(Ctls::KbReadProcessMemory, &Input, sizeof(Input));
         }
 
-        BOOL WINAPI KbWriteProcessMemory(ULONG ProcessId, OUT WdkTypes::PVOID BaseAddress, IN PVOID Buffer, ULONG Size) {
+        BOOL WINAPI KbWriteProcessMemory(
+            ULONG ProcessId,
+            OUT WdkTypes::PVOID BaseAddress,
+            IN PVOID Buffer,
+            ULONG Size,
+            BOOLEAN PerformCopyOnWrite
+        ) {
             if (!ProcessId || !BaseAddress || !Buffer || !Size) return FALSE;
-            KB_READ_WRITE_PROCESS_MEMORY_IN Input = {};
+            KB_WRITE_PROCESS_MEMORY_IN Input = {};
             Input.ProcessId = ProcessId;
             Input.BaseAddress = BaseAddress;
             Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
             Input.Size = Size;
+            Input.PerformCopyOnWrite = PerformCopyOnWrite;
             return KbSendRequest(Ctls::KbWriteProcessMemory, &Input, sizeof(Input));
+        }
+
+        BOOL WINAPI KbGetProcessCr3Cr4(ULONG ProcessId, OUT OPTIONAL PUINT64 Cr3, OUT OPTIONAL PUINT64 Cr4) {
+            if (!ProcessId) return FALSE;
+            KB_GET_PROCESS_CR3_CR4_IN Input = {};
+            KB_GET_PROCESS_CR3_CR4_OUT Output = {};
+            Input.ProcessId = ProcessId;
+            BOOL Status = KbSendRequest(Ctls::KbGetProcessCr3Cr4, &Input, sizeof(Input), &Output, sizeof(Output));
+            if (Cr3) *Cr3 = Output.Cr3;
+            if (Cr4) *Cr4 = Output.Cr4;
+            return Status;
         }
     }
 
     namespace Apc {
-        BOOL WINAPI KbQueueUserApc(ULONG ThreadId, _ApcProc ApcProc, PVOID Argument) {
+        BOOL WINAPI KbQueueUserApc(ULONG ThreadId, WdkTypes::PVOID ApcProc, WdkTypes::PVOID Argument) {
             KB_QUEUE_USER_APC_IN Input = {};
             Input.ThreadId = ThreadId;
-            Input.ApcProc = reinterpret_cast<WdkTypes::PVOID>(ApcProc);
-            Input.Argument = reinterpret_cast<WdkTypes::PVOID>(Argument);
+            Input.ApcProc = ApcProc;
+            Input.Argument = Argument;
             return KbSendRequest(Ctls::KbQueueUserApc, &Input, sizeof(Input));
         }
     }
@@ -992,6 +1207,56 @@ namespace LoadableModules {
         Input.CtlCode = CtlCode;
         Input.Argument = Argument;
         return KbSendRequest(Ctls::KbCallModule, &Input, sizeof(Input));
+    }
+}
+
+namespace PCI {
+    BOOL WINAPI KbReadPciConfig(
+        ULONG PciAddress,
+        ULONG PciOffset,
+        OUT PVOID Buffer,
+        ULONG Size,
+        OPTIONAL OUT PULONG BytesRead
+    ) {
+        KB_READ_WRITE_PCI_CONFIG_IN Input = {};
+        KB_READ_WRITE_PCI_CONFIG_OUT Output = {};
+        Input.PciAddress = PciAddress;
+        Input.PciOffset = PciOffset;
+        Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+        Input.Size = Size;
+        BOOL Status = KbSendRequest(Ctls::KbReadPciConfig, &Input, sizeof(Input), &Output, sizeof(Output));
+        if (BytesRead) *BytesRead = Output.ReadOrWritten;
+        return Status;
+    }
+
+    BOOL WINAPI KbWritePciConfig(
+        ULONG PciAddress,
+        ULONG PciOffset,
+        IN PVOID Buffer,
+        ULONG Size,
+        OPTIONAL OUT PULONG BytesWritten
+    ) {
+        KB_READ_WRITE_PCI_CONFIG_IN Input = {};
+        KB_READ_WRITE_PCI_CONFIG_OUT Output = {};
+        Input.PciAddress = PciAddress;
+        Input.PciOffset = PciOffset;
+        Input.Buffer = reinterpret_cast<WdkTypes::PVOID>(Buffer);
+        Input.Size = Size;
+        BOOL Status = KbSendRequest(Ctls::KbWritePciConfig, &Input, sizeof(Input), &Output, sizeof(Output));
+        if (BytesWritten) *BytesWritten = Output.ReadOrWritten;
+        return Status;
+    }
+}
+
+namespace Hypervisor {
+    BOOL WINAPI KbVmmEnable()
+    {
+        return KbSendRequest(Ctls::KbVmmEnable);
+    }
+
+    BOOL WINAPI KbVmmDisable()
+    {
+        return KbSendRequest(Ctls::KbVmmDisable);
     }
 }
 

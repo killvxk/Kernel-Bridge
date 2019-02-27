@@ -1,6 +1,8 @@
 #include <fltKernel.h>
 #include "Importer.h"
 #include "MemoryUtils.h"
+#include "PTE.h"
+#include "PteUtils.h"
 #include "ProcessesUtils.h"
 
 namespace Processes {
@@ -401,29 +403,40 @@ namespace Processes {
         };
 
         _IRQL_requires_max_(APC_LEVEL)
-        NTSTATUS OperateProcessMemory(
+        static NTSTATUS OperateProcessMemory(
             PEPROCESS Process,
-            __in_data_source(USER_MODE) PVOID BaseAddress,
+            PVOID BaseAddress,
             PVOID Buffer,
             ULONG Size,
             MEMORY_OPERATION_TYPE Operation
         ) {
             if (!Process) return STATUS_INVALID_PARAMETER_1;
-            if (!BaseAddress || AddressRange::IsKernelAddress(BaseAddress)) return STATUS_INVALID_PARAMETER_2;
+            if (!BaseAddress) return STATUS_INVALID_PARAMETER_2;
             if (!Buffer) return STATUS_INVALID_PARAMETER_3;
             if (!Size) return STATUS_INVALID_PARAMETER_4;
 
+            if (AddressRange::IsKernelAddress(BaseAddress)) {
+                if (!VirtualMemory::IsMemoryRangePresent(BaseAddress, Size))
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+
+            if (AddressRange::IsKernelAddress(Buffer)) {
+                if (!VirtualMemory::IsMemoryRangePresent(Buffer, Size))
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+
             // Attempt to lock process memory from freeing:
             HANDLE hProcessSecure = NULL;
-            if (!VirtualMemory::SecureProcessMemory(Process, BaseAddress, Size, PAGE_READONLY, &hProcessSecure))
-                return STATUS_NOT_LOCKED;
+            if (AddressRange::IsUserAddress(BaseAddress)) {
+                if (!VirtualMemory::SecureProcessMemory(Process, BaseAddress, Size, PAGE_READONLY, &hProcessSecure))
+                    return STATUS_NOT_LOCKED;
+            }
 
             // Attempt to lock buffer memory if it is usermode memory:
             HANDLE hBufferSecure = NULL;
-            BOOLEAN IsBufferUsermode = AddressRange::IsUserAddress(Buffer);
-            if (IsBufferUsermode) {
+            if (AddressRange::IsUserAddress(Buffer)) {
                 if (!VirtualMemory::SecureMemory(Buffer, Size, PAGE_READWRITE, &hBufferSecure)) {
-                    VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
+                    if (hProcessSecure) VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
                     return STATUS_NOT_LOCKED;
                 }
             }
@@ -439,8 +452,8 @@ namespace Processes {
             );
 
             if (!NT_SUCCESS(Status)) { 
-                VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
-                if (IsBufferUsermode) VirtualMemory::UnsecureMemory(hBufferSecure);
+                if (hProcessSecure) VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
+                if (hBufferSecure) VirtualMemory::UnsecureMemory(hBufferSecure);
                 return STATUS_NOT_MAPPED_VIEW;
             }
 
@@ -456,8 +469,8 @@ namespace Processes {
 
             if (!NT_SUCCESS(Status)) {
                 Mdl::UnmapMemory(&ProcessMapping);
-                VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
-                if (IsBufferUsermode) VirtualMemory::UnsecureMemory(hBufferSecure);
+                if (hProcessSecure) VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
+                if (hBufferSecure) VirtualMemory::UnsecureMemory(hBufferSecure);
                 return STATUS_NOT_MAPPED_VIEW;
             }
 
@@ -465,18 +478,18 @@ namespace Processes {
                 Status = STATUS_UNSUCCESSFUL;
                 switch (Operation) {
                 case MemRead:
-                    RtlCopyMemory(BufferMapping.BaseAddress, ProcessMapping.BaseAddress, Size);
+                    VirtualMemory::CopyMemory(BufferMapping.BaseAddress, ProcessMapping.BaseAddress, Size);
                     break;
                 case MemWrite:
-                    RtlCopyMemory(ProcessMapping.BaseAddress, BufferMapping.BaseAddress, Size);
+                    VirtualMemory::CopyMemory(ProcessMapping.BaseAddress, BufferMapping.BaseAddress, Size);
                     break;
                 }
                 Status = STATUS_SUCCESS;
             } __finally {
                 Mdl::UnmapMemory(&BufferMapping);
                 Mdl::UnmapMemory(&ProcessMapping);
-                VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
-                if (IsBufferUsermode) VirtualMemory::UnsecureMemory(hBufferSecure);
+                if (hProcessSecure) VirtualMemory::UnsecureProcessMemory(Process, hProcessSecure);
+                if (hBufferSecure) VirtualMemory::UnsecureMemory(hBufferSecure);
             }
 
             return Status;
@@ -485,7 +498,7 @@ namespace Processes {
         _IRQL_requires_max_(APC_LEVEL)
         NTSTATUS ReadProcessMemory(
             PEPROCESS Process,
-            __in_data_source(USER_MODE) IN PVOID BaseAddress,
+            IN PVOID BaseAddress,
             OUT PVOID Buffer,
             ULONG Size
         ) {
@@ -495,7 +508,7 @@ namespace Processes {
         _IRQL_requires_max_(APC_LEVEL)
         NTSTATUS WriteProcessMemory(
             PEPROCESS Process,
-            __in_data_source(USER_MODE) OUT PVOID BaseAddress,
+            OUT PVOID BaseAddress,
             IN PVOID Buffer,
             ULONG Size
         ) {

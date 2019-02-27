@@ -2,15 +2,20 @@
 The "Kernel-Bridge" project is a Windows kernel driver template, development framework and
 kernel-mode API and wrappers written on C++17.  
   
-### ✔ It supports work with:
+[Precompiled and signed binaries with the SecureBoot support](https://github.com/HoShiMin/Kernel-Bridge/releases)
+  
+### ✔ Capabilites:
+* Hypervisor (AMD-V/RVI)
 * IO-ports (+ 'in/out/cli/sti' usermode forwarding by IOPL)
 * System beeper
 * MSRs, CPUID, TSC and performance counters (RDPMC)
 * DMI/SMBIOS memory reading
-* Physical memory (RW, mappings)
+* Physical memory (allocations, RW, mappings)
 * Kernel memory management (allocations, mappings, transitions)
 * Usermode memory management (allocations in processes etc.)
 * Direct UM->KM and KM->UM memory transitions
+* Direct PTE-based memory management
+* Direct MDL management
 * Obtaining processes/threads handles from kernel
 * Reading and writing memory of another processes
 * Suspending/resuming/termination processes
@@ -21,10 +26,18 @@ kernel-mode API and wrappers written on C++17.
 * Unsigned drivers mapping
 * Processes, threads, handles and modules usermode callbacks (`ObRegisterCallbacks` & `PsSet***NotifyRoutine`)
 * Minifilter with usermode callbacks
+* PDB parsing
+* Signatures and patterns scanning
+* Sections management (to map `\\Device\PhysicalMemory` and more)
+* PCI configuration
+* Python binding
   
-### ➰ In development and coming soon:
-* PCI configuration (is it really necessary?)
-* PDB parsing and AsmJIT integration
+### ➰ In development and plans:
+* Hypervisor with VT-x/EPT support
+* Qt-based GUI for the kernel-hacking and memory researching framework
+* Kernel WinSock support
+* Extensions for the RTL: hooks, injections, disassembling
+* Kernel loadable modules with SEH support
   
 Driver template has full support of C++ static and global initializers and all of C++17 features (without C++ exceptions). All of API modules are easy-to-use and have no external dependiencies, so you can include them to your own C++ drivers. All of API functions are grouped into a logical categories into namespaces, so you can quickly find all functions you want.
   
@@ -62,6 +75,8 @@ All required headers are `WdkTypes.h`, `CtlTypes.h` and `User-Bridge.h`. For usi
 `/Kernel-Bridge/API/` - standalone kernel API for using in C++ drivers  
 `/Kernel-Bridge/Kernel-Bridge/` - driver template files  
 `/SharedTypes/` - shared types headers required for UM and KM modules  
+`/CommonTypes/` - common user- and kernelmode headers and types  
+`/Python-Bridge/` - Python binding  
 `/Kernel-Tests/` - unit-tests for UM and KM modules and common functions  
   
 #### Example (using of KbReadProcessMemory):

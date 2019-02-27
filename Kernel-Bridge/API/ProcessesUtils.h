@@ -179,16 +179,16 @@ namespace Processes {
         _IRQL_requires_max_(APC_LEVEL)
         NTSTATUS ReadProcessMemory(
             PEPROCESS Process,
-            __in_data_source(USER_MODE) IN PVOID BaseAddress,
-            OUT PVOID Buffer, // User or kernel address
+            IN PVOID BaseAddress, // In the target process or kernel address
+            OUT PVOID Buffer, // User or kernel address in the current process
             ULONG Size
         );
 
         _IRQL_requires_max_(APC_LEVEL)
         NTSTATUS WriteProcessMemory(
             PEPROCESS Process,
-            __in_data_source(USER_MODE) OUT PVOID BaseAddress,
-            IN PVOID Buffer, // User or kernel address
+            OUT PVOID BaseAddress, // In the target process or kernel address
+            IN PVOID Buffer, // User or kernel address in the current process
             ULONG Size
         );
     }

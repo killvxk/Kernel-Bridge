@@ -32,6 +32,9 @@
     <Filter Include="CommonTypes">
       <UniqueIdentifier>{1540d3f3-c5f5-44c0-a3bb-2246da568195}</UniqueIdentifier>
     </Filter>
+    <Filter Include="HookLib">
+      <UniqueIdentifier>{1d6d5ce4-f4f5-467c-ab9f-d21fbbac9bcd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Inf Include="Kernel-Bridge.inf">
@@ -98,13 +101,16 @@
     <ClCompile Include="API\SectionsUtils.cpp">
       <Filter>API</Filter>
     </ClCompile>
-    <ClCompile Include="API\PCI.cpp">
-      <Filter>API</Filter>
-    </ClCompile>
     <ClCompile Include="API\Hypervisor.cpp">
       <Filter>API</Filter>
     </ClCompile>
     <ClCompile Include="API\PteUtils.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="API\Callable.cpp">
+      <Filter>API</Filter>
+    </ClCompile>
+    <ClCompile Include="API\Stopwatch.cpp">
       <Filter>API</Filter>
     </ClCompile>
   </ItemGroup>
@@ -184,9 +190,6 @@
     <ClInclude Include="API\SectionsUtils.h">
       <Filter>API</Filter>
     </ClInclude>
-    <ClInclude Include="API\PCI.h">
-      <Filter>API</Filter>
-    </ClInclude>
     <ClInclude Include="API\Hypervisor.h">
       <Filter>API</Filter>
     </ClInclude>
@@ -196,10 +199,37 @@
     <ClInclude Include="..\CommonTypes\SVM.h">
       <Filter>CommonTypes</Filter>
     </ClInclude>
-    <ClInclude Include="..\CommonTypes\DescriptorTables.h">
+    <ClInclude Include="API\PteUtils.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\VMX.h">
       <Filter>CommonTypes</Filter>
     </ClInclude>
-    <ClInclude Include="API\PteUtils.h">
+    <ClInclude Include="..\CommonTypes\Registers.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\CPUID.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\Segmentation.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\MSR.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\Interrupts.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\CommonTypes\Hyper-V.h">
+      <Filter>CommonTypes</Filter>
+    </ClInclude>
+    <ClInclude Include="API\Callable.h">
+      <Filter>API</Filter>
+    </ClInclude>
+    <ClInclude Include="..\HookLib\HookLib\HookLib\HookLib.h">
+      <Filter>HookLib</Filter>
+    </ClInclude>
+    <ClInclude Include="API\Stopwatch.h">
       <Filter>API</Filter>
     </ClInclude>
   </ItemGroup>
@@ -209,7 +239,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="API\SVM.asm">
+    <MASM Include="API\VMM.asm">
       <Filter>API</Filter>
     </MASM>
   </ItemGroup>

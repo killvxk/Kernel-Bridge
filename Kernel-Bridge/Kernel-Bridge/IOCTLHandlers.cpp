@@ -19,7 +19,6 @@
 #include "../API/KernelShells.h"
 #include "../API/StringsAPI.h"
 #include "../API/Signatures.h"
-#include "../API/PCI.h"
 #include "../API/Hypervisor.h"
 
 #include "IOCTLs.h"
@@ -324,7 +323,7 @@ namespace
 
         CPU::CPUID(
             static_cast<PKB_CPUID_IN>(RequestInfo->InputBuffer)->FunctionIdEax,
-            static_cast<CPU::PCPUID_INFO>(RequestInfo->OutputBuffer)
+            static_cast<int*>(RequestInfo->OutputBuffer)
         );
 
         *ResponseLength = RequestInfo->OutputBufferSize;
@@ -343,7 +342,7 @@ namespace
         CPU::CPUIDEX(
             static_cast<PKB_CPUIDEX_IN>(RequestInfo->InputBuffer)->FunctionIdEax,
             static_cast<PKB_CPUIDEX_IN>(RequestInfo->InputBuffer)->SubfunctionIdEcx,
-            static_cast<CPU::PCPUID_INFO>(RequestInfo->OutputBuffer)
+            static_cast<int*>(RequestInfo->OutputBuffer)
         );
 
         *ResponseLength = RequestInfo->OutputBufferSize;
@@ -1473,6 +1472,27 @@ namespace
         return Status; 
     }
 
+    NTSTATUS FASTCALL KbTriggerCopyOnWrite(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
+    {
+        UNREFERENCED_PARAMETER(ResponseLength);
+
+        if (RequestInfo->InputBufferSize != sizeof(KB_TRIGGER_COPY_ON_WRITE_IN))
+            return STATUS_INFO_LENGTH_MISMATCH;
+
+        auto Input = static_cast<PKB_TRIGGER_COPY_ON_WRITE_IN>(RequestInfo->InputBuffer);
+        if (!Input) return STATUS_INVALID_PARAMETER;
+
+        HANDLE ProcessId = Input->ProcessId ? reinterpret_cast<HANDLE>(Input->ProcessId) : PsGetCurrentProcessId();
+        PEPROCESS Process = Processes::Descriptors::GetEPROCESS(ProcessId);
+        if (!Process) return STATUS_UNSUCCESSFUL;
+
+        BOOLEAN Status = Pte::TriggerCopyOnWrite(Process, reinterpret_cast<PVOID>(Input->PageVirtualAddress));
+
+        ObDereferenceObject(Process);
+
+        return Status ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+    }
+
     NTSTATUS FASTCALL KbSuspendProcess(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
     {    
         UNREFERENCED_PARAMETER(ResponseLength);
@@ -1717,7 +1737,7 @@ namespace
 
                 PsTerminateSystemThread(Status);
             },
-            reinterpret_cast<PVOID>(Input->Argument),
+            reinterpret_cast<PVOID>(&Params),
             &hThread,
             &ClientId
         );
@@ -1910,52 +1930,6 @@ namespace
         );
     }
 
-    NTSTATUS FASTCALL KbReadPciConfig(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
-    {
-        if (
-            RequestInfo->InputBufferSize != sizeof(KB_READ_WRITE_PCI_CONFIG_IN) || 
-            RequestInfo->OutputBufferSize != sizeof(KB_READ_WRITE_PCI_CONFIG_OUT)
-        ) return STATUS_INFO_LENGTH_MISMATCH;
-
-        auto Input = static_cast<PKB_READ_WRITE_PCI_CONFIG_IN>(RequestInfo->InputBuffer);
-        auto Output = static_cast<PKB_READ_WRITE_PCI_CONFIG_OUT>(RequestInfo->OutputBuffer);
-
-        if (!Input || !Output || !Input->Buffer || !Input->Size) return STATUS_INVALID_PARAMETER;
-
-        Output->ReadOrWritten = PCI::ReadPciConfig(
-            Input->PciAddress,
-            Input->PciOffset,
-            reinterpret_cast<PVOID>(Input->Buffer),
-            Input->Size
-        );
-
-        *ResponseLength = sizeof(*Output);
-        return STATUS_SUCCESS;
-    }
-
-    NTSTATUS FASTCALL KbWritePciConfig(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
-    {
-        if (
-            RequestInfo->InputBufferSize != sizeof(KB_READ_WRITE_PCI_CONFIG_IN) || 
-            RequestInfo->OutputBufferSize != sizeof(KB_READ_WRITE_PCI_CONFIG_OUT)
-        ) return STATUS_INFO_LENGTH_MISMATCH;
-
-        auto Input = static_cast<PKB_READ_WRITE_PCI_CONFIG_IN>(RequestInfo->InputBuffer);
-        auto Output = static_cast<PKB_READ_WRITE_PCI_CONFIG_OUT>(RequestInfo->OutputBuffer);
-
-        if (!Input || !Output || !Input->Buffer || !Input->Size) return STATUS_INVALID_PARAMETER;
-
-        Output->ReadOrWritten = PCI::WritePciConfig(
-            Input->PciAddress,
-            Input->PciOffset,
-            reinterpret_cast<PVOID>(Input->Buffer),
-            Input->Size
-        );
-
-        *ResponseLength = sizeof(*Output);
-        return STATUS_SUCCESS;
-    }
-
     NTSTATUS FASTCALL KbVmmEnable(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
     {
         UNREFERENCED_PARAMETER(RequestInfo);
@@ -1968,6 +1942,39 @@ namespace
         UNREFERENCED_PARAMETER(RequestInfo);
         UNREFERENCED_PARAMETER(ResponseLength);
         return Hypervisor::Devirtualize() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+    }
+
+    NTSTATUS FASTCALL KbVmmInterceptPage(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
+    {
+        UNREFERENCED_PARAMETER(ResponseLength);
+
+        if (RequestInfo->InputBufferSize != sizeof(KB_VMM_INTERCEPT_PAGE_IN))
+            return STATUS_INFO_LENGTH_MISMATCH;
+
+        auto Input = static_cast<PKB_VMM_INTERCEPT_PAGE_IN>(RequestInfo->InputBuffer);
+        bool Status = Hypervisor::InterceptPage(
+            Input->PhysicalAddress,
+            Input->OnReadPhysicalAddress,
+            Input->OnWritePhysicalAddress,
+            Input->OnExecutePhysicalAddress,
+            Input->OnExecuteReadPhysicalAddress,
+            Input->OnExecuteWritePhysicalAddress
+        );
+
+        return Status ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
+    }
+
+    NTSTATUS FASTCALL KbVmmDeinterceptPage(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
+    {
+        UNREFERENCED_PARAMETER(ResponseLength);
+
+        if (RequestInfo->InputBufferSize != sizeof(KB_VMM_DEINTERCEPT_PAGE_IN))
+            return STATUS_INFO_LENGTH_MISMATCH;
+
+        auto Input = static_cast<PKB_VMM_DEINTERCEPT_PAGE_IN>(RequestInfo->InputBuffer);
+        bool Status = Hypervisor::DeinterceptPage(Input->PhysicalAddress);
+
+        return Status ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
     }
 
     NTSTATUS FASTCALL KbExecuteShellCode(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLength)
@@ -2442,44 +2449,43 @@ NTSTATUS FASTCALL DispatchIOCTL(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T Response
         /* 63 */ KbUnsecureVirtualMemory,
         /* 64 */ KbReadProcessMemory,
         /* 65 */ KbWriteProcessMemory,
-        /* 66 */ KbSuspendProcess,
-        /* 67 */ KbResumeProcess,
-        /* 68 */ KbGetThreadContext,
-        /* 69 */ KbSetThreadContext,
-        /* 70 */ KbCreateUserThread,
-        /* 71 */ KbCreateSystemThread,
-        /* 72 */ KbQueueUserApc,
-        /* 73 */ KbRaiseIopl,
-        /* 74 */ KbResetIopl,
-        /* 75 */ KbGetProcessCr3Cr4,
+        /* 66 */ KbTriggerCopyOnWrite,
+        /* 67 */ KbSuspendProcess,
+        /* 68 */ KbResumeProcess,
+        /* 69 */ KbGetThreadContext,
+        /* 70 */ KbSetThreadContext,
+        /* 71 */ KbCreateUserThread,
+        /* 72 */ KbCreateSystemThread,
+        /* 73 */ KbQueueUserApc,
+        /* 74 */ KbRaiseIopl,
+        /* 75 */ KbResetIopl,
+        /* 76 */ KbGetProcessCr3Cr4,
 
         // Sections:
-        /* 76 */ KbCreateSection,
-        /* 77 */ KbOpenSection,
-        /* 78 */ KbMapViewOfSection,
-        /* 79 */ KbUnmapViewOfSection,
+        /* 77 */ KbCreateSection,
+        /* 78 */ KbOpenSection,
+        /* 79 */ KbMapViewOfSection,
+        /* 80 */ KbUnmapViewOfSection,
 
         // Loadable modules:
-        /* 80 */ KbCreateDriver,
-        /* 81 */ KbLoadModule,
-        /* 82 */ KbGetModuleHandle,
-        /* 83 */ KbCallModule,
-        /* 84 */ KbUnloadModule,
-
-        // PCI:
-        /* 85 */ KbReadPciConfig,
-        /* 86 */ KbWritePciConfig,
+        /* 81 */ KbCreateDriver,
+        /* 82 */ KbLoadModule,
+        /* 83 */ KbGetModuleHandle,
+        /* 84 */ KbCallModule,
+        /* 85 */ KbUnloadModule,
 
         // Hypervisor:
-        /* 87 */ KbVmmEnable,
-        /* 88 */ KbVmmDisable,
+        /* 86 */ KbVmmEnable,
+        /* 87 */ KbVmmDisable,
+        /* 88 */ KbVmmInterceptPage,
+        /* 89 */ KbVmmDeinterceptPage,
 
         // Stuff u kn0w:
-        /* 89 */ KbExecuteShellCode,
-        /* 90 */ KbGetKernelProcAddress,
-        /* 91 */ KbStallExecutionProcessor,
-        /* 92 */ KbBugCheck,
-        /* 93 */ KbFindSignature
+        /* 90 */ KbExecuteShellCode,
+        /* 91 */ KbGetKernelProcAddress,
+        /* 92 */ KbStallExecutionProcessor,
+        /* 93 */ KbBugCheck,
+        /* 94 */ KbFindSignature
     };
 
     USHORT Index = EXTRACT_CTL_CODE(RequestInfo->ControlCode) - CTL_BASE;

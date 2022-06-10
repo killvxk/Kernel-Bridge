@@ -1,11 +1,14 @@
 # The Kernel-Bridge Framework
-The "Kernel-Bridge" project is a Windows kernel driver template, development framework and
-kernel-mode API and wrappers written on C++17.  
+The "Kernel-Bridge" project is a C++20-ready Windows kernel driver template, development framework and
+kernel-mode API and wrappers.  
   
-[Precompiled and signed binaries with the SecureBoot support](https://github.com/HoShiMin/Kernel-Bridge/releases)
+[Precompiled and signed binaries with the SecureBoot support](https://github.com/HoShiMin/Kernel-Bridge/releases)  
+[Delphi bindings](https://github.com/diversenok/Kernel-Bridge-Delphi-Connector)
   
-### ✔ Capabilites:
-* Hypervisor (AMD-V/RVI)
+### ✔ Capabilities:
+* Hypervisor (both Intel VT-x/EPT and AMD-V/RVI) with the Hyper-V support
+* Extremely fast hypervisor-based memory interceptions and hiding (+ support of Write-only pages), VT-x only
+* Support of [HookLib](https://github.com/HoShiMin/HookLib) and [Zydis](https://github.com/zyantific/zydis)
 * IO-ports (+ 'in/out/cli/sti' usermode forwarding by IOPL)
 * System beeper
 * MSRs, CPUID, TSC and performance counters (RDPMC)
@@ -29,23 +32,22 @@ kernel-mode API and wrappers written on C++17.
 * PDB parsing
 * Signatures and patterns scanning
 * Sections management (to map `\\Device\PhysicalMemory` and more)
-* PCI configuration
 * Python binding
   
 ### ➰ In development and plans:
-* Hypervisor with VT-x/EPT support
 * Qt-based GUI for the kernel-hacking and memory researching framework
 * Kernel WinSock support
 * Extensions for the RTL: hooks, injections, disassembling
 * Kernel loadable modules with SEH support
   
-Driver template has full support of C++ static and global initializers and all of C++17 features (without C++ exceptions). All of API modules are easy-to-use and have no external dependiencies, so you can include them to your own C++ drivers. All of API functions are grouped into a logical categories into namespaces, so you can quickly find all functions you want.
+Driver template has full support of C++ static and global initializers and all of C++20 features (without C++ exceptions). All of API modules are easy-to-use and have no external dependiencies, so you can include them to your own C++ drivers. All of API functions are grouped into a logical categories into namespaces, so you can quickly find all functions you want.
   
 ### 💦 Driver template has:
 * Support of METHOD_BUFFERED, METHOD_IN/OUT_DIRECT and METHOD_NEITHER
 * Minifilter loading and filtering routines templates
-* SAL-annotations and well-documented API
+* SAL-annotations and self-documented API
 * Ready-to-use IOCTLs handling routine
+* Out-of-box STL support
 * Static Driver Verifier tests passing
   
 ### 💨 Building and using:  

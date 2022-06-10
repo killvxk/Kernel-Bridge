@@ -2,6 +2,7 @@
 
 #include "MemoryUtils.h"
 #include "PTE.h"
+#include "Registers.h"
 #include "PteUtils.h"
 
 namespace Pte {
@@ -15,7 +16,8 @@ namespace Pte {
 #endif
 
     _IRQL_requires_max_(APC_LEVEL)
-    BOOLEAN GetPageTables(PVOID Address, OUT PAGE_TABLES_INFO* Info) {
+    BOOLEAN GetPageTables(PVOID Address, OUT PAGE_TABLES_INFO* Info)
+    {
         if (!Info) return FALSE;
         *Info = {};
 
@@ -39,20 +41,24 @@ namespace Pte {
         PVOID64 PdpePhys = reinterpret_cast<PVOID64>(PFN_TO_PAGE(Info->Pml4e->x64.Generic.PDP) + Va.x64.Generic.PageDirectoryPointerOffset * sizeof(PDPE::x64));
         Info->Pdpe = reinterpret_cast<PDPE*>(GetVirtualForPhysical(PdpePhys));
         if (!Info->Pdpe) return FALSE;
-        if (Info->Pdpe->x64.Generic.PS) {
+        if (Info->Pdpe->x64.Generic.PS)
+        {
             // Page size = 1 Gb:
             if (!Info->Pdpe->x64.PageSize.Page1Gb.P) return FALSE;
             Info->Type = PAGE_TABLES_INFO::pt64Page1Gb;
         }
-        else {
+        else
+        {
             PVOID64 PdePhys = reinterpret_cast<PVOID64>(PFN_TO_PAGE(Info->Pdpe->x64.NonPageSize.Generic.PD) + Va.x64.NonPageSize.Generic.PageDirectoryOffset * sizeof(PDE::x64));
             Info->Pde = reinterpret_cast<PDE*>(GetVirtualForPhysical(PdePhys));
             if (!Info->Pde) return FALSE;
-            if (Info->Pde->x64.Generic.PS) {
+            if (Info->Pde->x64.Generic.PS)
+            {
                 // Page size = 2 Mb:
                 Info->Type = PAGE_TABLES_INFO::pt64Page2Mb;
             }
-            else {
+            else
+            {
                 // Page size = 4 Kb:
                 Info->Type = PAGE_TABLES_INFO::pt64Page4Kb;
 
@@ -62,8 +68,9 @@ namespace Pte {
             }
         }
 #else
-        if (Cr4.x32.Bitmap.PAE) {
-            PVOID64 PdpePhys = reinterpret_cast<PVOID64>(PFN_TO_PAGE(Cr3.x32.Pae.PDP) + Va.x32.Pae.Generic.PageDirectoryPointerOffset * sizeof(PDPE::x32));
+        if (Cr4.x32.Bitmap.PAE)
+        {
+            PVOID64 PdpePhys = reinterpret_cast<PVOID64>(PFN_TO_PDP_PAE(Cr3.x32.Pae.PDP) + Va.x32.Pae.Generic.PageDirectoryPointerOffset * sizeof(PDPE::x32));
             Info->Pdpe = reinterpret_cast<PDPE*>(GetVirtualForPhysical(PdpePhys));
             if (!Info->Pdpe) return FALSE;
             if (!Info->Pdpe->x32.Pae.Generic.P) return TRUE;
@@ -71,11 +78,13 @@ namespace Pte {
             PVOID64 PdePhys = reinterpret_cast<PVOID64>(PFN_TO_PAGE(Info->Pdpe->x32.Pae.Generic.PD) + Va.x32.Pae.Generic.PageDirectoryOffset * sizeof(PDE::x32));
             Info->Pde = reinterpret_cast<PDE*>(GetVirtualForPhysical(PdePhys));
             if (!Info->Pde) return FALSE;
-            if (!Info->Pde->x32.Pae.Generic.PS) {
+            if (!Info->Pde->x32.Pae.Generic.PS)
+            {
                 // Page size = 2 Mb:
                 Info->Type = PAGE_TABLES_INFO::pt32PaePage2Mb;
             }
-            else {
+            else
+            {
                 // Page size = 4 Kb:
                 Info->Type = PAGE_TABLES_INFO::pt32PaePage4Kb;
 
@@ -85,17 +94,21 @@ namespace Pte {
                 if (!Info->Pte) return FALSE;
             }
         }
-        else {
-            if (Cr4.x32.Bitmap.PSE) {
+        else
+        {
+            if (Cr4.x32.Bitmap.PSE)
+            {
                 PVOID64 PdePhys = reinterpret_cast<PVOID64>(PFN_TO_PAGE(Cr3.x32.NonPae.PD) + Va.x32.NonPae.Page4Kb.PageDirectoryOffset * sizeof(PDE::x32));
                 Info->Pde = reinterpret_cast<PDE*>(GetVirtualForPhysical(PdePhys));
                 if (!Info->Pde) return FALSE;
 
-                if (Info->Pde->x32.NonPae.Generic.PS) {
+                if (Info->Pde->x32.NonPae.Generic.PS)
+                {
                     // Page size = 4 Mb:
                     Info->Type = PAGE_TABLES_INFO::pt32NonPaePage4Mb;
                 }
-                else {
+                else
+                {
                     // Page size = 4 Kb:
                     Info->Type = PAGE_TABLES_INFO::pt32NonPaePage4Kb;
 
@@ -106,7 +119,8 @@ namespace Pte {
                     if (!Info->Pte) return FALSE;
                 }
             }
-            else {
+            else
+            {
                 // Page size = 4 Kb:
                 Info->Type = PAGE_TABLES_INFO::pt32NonPaePage4Kb;
 
@@ -125,7 +139,8 @@ namespace Pte {
     }
 
     _IRQL_requires_max_(APC_LEVEL)
-    BOOLEAN TriggerCopyOnWrite(OPTIONAL PEPROCESS Process, PVOID Address, OPTIONAL OUT PULONG PageSize) {
+    BOOLEAN TriggerCopyOnWrite(OPTIONAL PEPROCESS Process, PVOID Address, OPTIONAL OUT PULONG PageSize)
+    {
         BOOLEAN NeedToAttach = Process && Process != PsGetCurrentProcess();
         KAPC_STATE ApcState;
         if (NeedToAttach)
@@ -134,65 +149,71 @@ namespace Pte {
         BOOLEAN Status = FALSE;
         PAGE_TABLES_INFO Info = {};
         Status = GetPageTables(Address, &Info);
-        if (Status) __try {
+        if (Status) __try
+        {
             // AVL is a 3-bit field:
             //   AVL:CopyOnWrite : 1
             //   AVL:Unused : 1
-            //   AVL:Writeable : 1;
-            // We're setting the CoW and Writeable bits (0b101):
-            constexpr unsigned int COW_AND_WRITEABLE_MASK = 0b101;
+            //   AVL:Write : 1;
+            // We're setting the CoW bit (0b001):
+            constexpr unsigned int COW_MASK = 0b001;
+            constexpr unsigned int WRITE_MASK = 0b100;
 
             if (PageSize) *PageSize = 0;
 
-            switch (Info.Type) {
+            switch (Info.Type)
+            {
             case PAGE_TABLES_INFO::pt32NonPaePage4Kb:
                 // PDE -> PTE -> PA:
                 if (PageSize) *PageSize = 4096;
-                if (Info.Pte->x32.NonPae.Page4Kb.D) break;
-                Info.Pte->x32.NonPae.Page4Kb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pte->x32.NonPae.Page4Kb.P || Info.Pte->x32.NonPae.Page4Kb.D || (Info.Pte->x32.NonPae.Page4Kb.AVL & WRITE_MASK)) break;
+                Info.Pte->x32.NonPae.Page4Kb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt32NonPaePage4Mb:
                 // PDE -> PA:
                 if (PageSize) *PageSize = 4096 * 1024;
-                if (Info.Pde->x32.NonPae.Page4Mb.D) break;
-                Info.Pde->x32.NonPae.Page4Mb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pde->x32.NonPae.Page4Mb.P || Info.Pde->x32.NonPae.Page4Mb.D || (Info.Pde->x32.NonPae.Page4Mb.AVL & WRITE_MASK)) break;
+                Info.Pde->x32.NonPae.Page4Mb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt32PaePage4Kb:
                 // PDPE -> PDE -> PTE -> PA:
                 if (PageSize) *PageSize = 4096;
-                if (Info.Pte->x32.Pae.Page4Kb.D) break;
-                Info.Pte->x32.Pae.Page4Kb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pte->x32.Pae.Page4Kb.P || Info.Pte->x32.Pae.Page4Kb.D || (Info.Pte->x32.Pae.Page4Kb.AVL & WRITE_MASK)) break;
+                Info.Pte->x32.Pae.Page4Kb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt32PaePage2Mb:
                 // PDPE -> PDE -> PA:
                 if (PageSize) *PageSize = 2048 * 1024;
-                if (Info.Pde->x32.Pae.Page2Mb.D) break;
-                Info.Pde->x32.Pae.Page2Mb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pde->x32.Pae.Page2Mb.P || Info.Pde->x32.Pae.Page2Mb.D || (Info.Pde->x32.Pae.Page2Mb.AVL & WRITE_MASK)) break;
+                Info.Pde->x32.Pae.Page2Mb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt64Page4Kb:
                 // PML4E -> PDPE -> PDE -> PTE -> PA:
                 if (PageSize) *PageSize = 4096;
-                if (Info.Pte->x64.Page4Kb.D) break;
-                Info.Pte->x64.Page4Kb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pte->x64.Page4Kb.P || Info.Pte->x64.Page4Kb.D || (Info.Pte->x64.Page4Kb.AVL & WRITE_MASK)) break;
+                Info.Pte->x64.Page4Kb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt64Page2Mb:
                 // PML4E -> PDPE -> PDE -> PA:
                 if (PageSize) *PageSize = 2048 * 1024;
-                if (Info.Pde->x64.Page2Mb.D) break;
-                Info.Pde->x64.Page2Mb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pde->x64.Page2Mb.P || Info.Pde->x64.Page2Mb.D || (Info.Pde->x64.Page2Mb.AVL & WRITE_MASK)) break;
+                Info.Pde->x64.Page2Mb.AVL = COW_MASK;
                 break;
             case PAGE_TABLES_INFO::pt64Page1Gb:
                 // PML4E -> PDPE -> PA:
                 if (PageSize) *PageSize = 1024 * 1024 * 1024;
-                if (Info.Pdpe->x64.PageSize.Page1Gb.D) break;
-                Info.Pdpe->x64.PageSize.Page1Gb.AVL = COW_AND_WRITEABLE_MASK;
+                if (!Info.Pdpe->x64.PageSize.Page1Gb.P || Info.Pdpe->x64.PageSize.Page1Gb.D || (Info.Pdpe->x64.PageSize.Page1Gb.AVL & WRITE_MASK)) break;
+                Info.Pdpe->x64.PageSize.Page1Gb.AVL = COW_MASK;
                 break;
             }
 
             __invlpg(Address); // Reset the TLB
-            *reinterpret_cast<unsigned char*>(Address) = *reinterpret_cast<unsigned char*>(Address);
+
+            volatile LONG* PageAddress = reinterpret_cast<volatile LONG*>(ALIGN_DOWN_POINTER_BY(Address, PAGE_SIZE));
+            InterlockedExchange(PageAddress, *PageAddress);
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
             Status = FALSE;
         }
 
@@ -203,11 +224,12 @@ namespace Pte {
     }
 
     _IRQL_requires_max_(APC_LEVEL)
-    BOOLEAN IsPagePresent(PVOID Address, OPTIONAL OUT PULONG PageSize) {
+    BOOLEAN IsPagePresent(PVOID Address, OPTIONAL OUT PULONG PageSize)
+    {
         BOOLEAN IsPresent = FALSE;
         PAGE_TABLES_INFO Info = {};
-        if (GetPageTables(Address, &Info)) __try {
-
+        if (GetPageTables(Address, &Info)) __try
+        {
             if (PageSize) *PageSize = 0;
 
             switch (Info.Type) {
@@ -248,7 +270,8 @@ namespace Pte {
                 break;
             }
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
             IsPresent = FALSE;
         }
 
@@ -256,7 +279,8 @@ namespace Pte {
     }
 
     _IRQL_requires_max_(APC_LEVEL)
-    BOOLEAN IsProcessPagePresent(OPTIONAL PEPROCESS Process, PVOID Address, OPTIONAL OUT PULONG PageSize) {
+    BOOLEAN IsProcessPagePresent(OPTIONAL PEPROCESS Process, PVOID Address, OPTIONAL OUT PULONG PageSize)
+    {
         if (!Process || Process == PsGetCurrentProcess()) 
             return IsPagePresent(Address, PageSize);
         KAPC_STATE ApcState;
@@ -267,7 +291,8 @@ namespace Pte {
     }
 
     _IRQL_requires_max_(APC_LEVEL)
-    BOOLEAN IsMemoryRangePresent(OPTIONAL PEPROCESS Process, PVOID Address, SIZE_T Size) {
+    BOOLEAN IsMemoryRangePresent(OPTIONAL PEPROCESS Process, PVOID Address, SIZE_T Size)
+    {
         if (!Size) return FALSE;
 
         BOOLEAN NeedToAttach = Process && Process != PsGetCurrentProcess();

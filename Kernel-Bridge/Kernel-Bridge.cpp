@@ -133,7 +133,7 @@ static CONST FLT_REGISTRATION FilterRegistration =
 };
 
 
-NTSTATUS DriverEntry(
+extern "C" NTSTATUS NTAPI DriverEntry(
     _In_ PDRIVER_OBJECT DriverObject,
     _In_ PUNICODE_STRING RegistryPath
 ) {
@@ -266,6 +266,7 @@ NTSTATUS CallIoctlDispatcher(IN PIOCTL_INFO RequestInfo, OUT PSIZE_T ResponseLen
 
 
 // IOCTLs handler:
+_Function_class_(DRIVER_DISPATCH)
 _Dispatch_type_(IRP_MJ_DEVICE_CONTROL)
 static NTSTATUS DriverControl(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
@@ -307,10 +308,13 @@ static NTSTATUS DriverControl(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     }
     }
 
+    NTSTATUS Status = Irp->IoStatus.Status;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
-    return Irp->IoStatus.Status;
+
+    return Status;
 }
 
+_Function_class_(DRIVER_DISPATCH)
 _Dispatch_type_(IRP_MJ_CREATE)
 _Dispatch_type_(IRP_MJ_CLOSE)
 _Dispatch_type_(IRP_MJ_CLEANUP)
@@ -332,6 +336,7 @@ static NTSTATUS DriverStub(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
+
     return STATUS_SUCCESS;
 }
 
@@ -347,6 +352,9 @@ static VOID PowerCallback(PVOID CallbackContext, PVOID Argument1, PVOID Argument
     }
 }
 
+_Function_class_(DRIVER_UNLOAD)
+_IRQL_requires_(PASSIVE_LEVEL)
+_IRQL_requires_same_
 static NTSTATUS DriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 {
     PAGED_CODE();

@@ -118,11 +118,10 @@ EXPORTS
 	KbRtlLoadModuleMemory
 	KbRtlLoadModuleFile
 
-	KbReadPciConfig
-	KbWritePciConfig
-
     KbVmmEnable
     KbVmmDisable
+	KbVmmInterceptPage
+	KbVmmDeinterceptPage
 
 	KbGetKernelProcAddress
 	KbStallExecutionProcessor

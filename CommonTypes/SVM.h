@@ -418,7 +418,7 @@ namespace SVM
         unsigned long long Value;
         struct {
             unsigned long long Vector : 8; // IDT vector of the interrupt/exception (ignored if Type == 2)
-            unsigned long long Type : 2; // 0 = External/virtual interrupt (INTR), 2 = NMI, 3 = Exception (fault/trap), 4 = Software interrupt (INTn instruction)
+            unsigned long long Type : 3; // 0 = External/virtual interrupt (INTR), 2 = NMI, 3 = Exception (fault/trap), 4 = Software interrupt (INTn instruction)
             unsigned long long ErrorCodeValid : 1; // 1 - Exception should push an error code onto the stack
             unsigned long long Reserved : 19;
             unsigned long long Valid : 1; // 1 - Event is to be injected into the guest
@@ -505,38 +505,38 @@ namespace SVM
         VMEXIT_DR13_WRITE,
         VMEXIT_DR14_WRITE,
         VMEXIT_DR15_WRITE,
-        VMEXIT_EXCP0,
-        VMEXIT_EXCP1,
-        VMEXIT_EXCP2,
-        VMEXIT_EXCP3,
-        VMEXIT_EXCP4,
-        VMEXIT_EXCP5,
-        VMEXIT_EXCP6,
-        VMEXIT_EXCP7,
-        VMEXIT_EXCP8,
-        VMEXIT_EXCP9,
-        VMEXIT_EXCP10,
-        VMEXIT_EXCP11,
-        VMEXIT_EXCP12,
-        VMEXIT_EXCP13,
-        VMEXIT_EXCP14,
-        VMEXIT_EXCP15,
-        VMEXIT_EXCP16,
-        VMEXIT_EXCP17,
-        VMEXIT_EXCP18,
-        VMEXIT_EXCP19,
-        VMEXIT_EXCP20,
-        VMEXIT_EXCP21,
-        VMEXIT_EXCP22,
-        VMEXIT_EXCP23,
-        VMEXIT_EXCP24,
-        VMEXIT_EXCP25,
-        VMEXIT_EXCP26,
-        VMEXIT_EXCP27,
-        VMEXIT_EXCP28,
-        VMEXIT_EXCP29,
-        VMEXIT_EXCP30,
-        VMEXIT_EXCP31,
+        VMEXIT_EXCP_DE,
+        VMEXIT_EXCP_DB,
+        VMEXIT_EXCP_NMI,
+        VMEXIT_EXCP_BP,
+        VMEXIT_EXCP_OF,
+        VMEXIT_EXCP_BR,
+        VMEXIT_EXCP_UD,
+        VMEXIT_EXCP_NM,
+        VMEXIT_EXCP_DF,
+        VMEXIT_EXCP9,//Reserved
+        VMEXIT_EXCP_TS,
+        VMEXIT_EXCP_NP,
+        VMEXIT_EXCP_SS,
+        VMEXIT_EXCP_GP,
+        VMEXIT_EXCP_PF,
+        VMEXIT_EXCP15,//Reserved
+        VMEXIT_EXCP_MF,
+        VMEXIT_EXCP_AC,
+        VMEXIT_EXCP_MC,
+        VMEXIT_EXCP_XF,
+        VMEXIT_EXCP20,//Reserved
+        VMEXIT_EXCP21,//Reserved
+        VMEXIT_EXCP22,//Reserved
+        VMEXIT_EXCP23,//Reserved
+        VMEXIT_EXCP24,//Reserved
+        VMEXIT_EXCP25,//Reserved
+        VMEXIT_EXCP26,//Reserved
+        VMEXIT_EXCP27,//Reserved
+        VMEXIT_EXCP28,//Reserved
+        VMEXIT_EXCP_VC,
+        VMEXIT_EXCP_SX,
+        VMEXIT_EXCP31,//Reserved
         VMEXIT_INTR,
         VMEXIT_NMI,
         VMEXIT_SMI,
@@ -583,6 +583,7 @@ namespace SVM
         VMEXIT_MWAIT,
         VMEXIT_MWAIT_CONDITIONAL,
         VMEXIT_XSETBV,
+        VMEXIT_RDPRU,
         VMEXIT_EFER_WRITE_TRAP,
         VMEXIT_CR0_WRITE_TRAP,
         VMEXIT_CR1_WRITE_TRAP,
